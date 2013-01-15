@@ -1,0 +1,404 @@
+Nepal Refugee Analysis 01/04/2013
+========================================================
+
+BACKGROUND:
+
+In Nepal, when resettlement started in 2008 there were 110,000 refugees.  Nearly 5 years later, about half the population has been resettled.  As the population shrinks, the IOM medical staff has the impression that the remaining population will become more medically challenging.  If so, this would have implications for the effort needed to medically clear the remaining refugees, and would impact the agencies in the U.S. that need to find appropriate placement and care for the newly arrived.  
+
+OBJECTIVE:
+
+to determine if the resettlement population has changed from 2008 to 2012 by age and TB Class status.  
+
+METHODS / RESULTS 
+
+* created a spreadsheet in excel using DNA pivot table data
+  * variables included:  Arrivaldate.year, Agegroup -> agegroup3, TBclass, Present Country -> WRAPS Nationality (selected Nepal), From WRAPS: Nationality, Native language
+      
+      
+* imported spreadsheet to SAS to clean data
+  * Made new variable called Nation 
+      - For Bhutan, a category was made for each language
+      ex. Nationality="Bhutan", Language="English" -> Nation="Bhutan_English"
+      - For all other countries, Nation = Nationality
+    
+  * 3 levels were made from TB class:  
+      - B1 pulmonary = includes B1 pumonary + (B1 pumonary + extrapulmonary)
+      - B other = B2, B3, and B1 unknown type
+      - Other = all other classes + no classes
+      
+  * For B1 pulmnoary, 3 categories were created:  treated for TB, not treated, and unknown
+    
+* exported back to excel for analysis in R
+
+* reading in spreadsheet
+```{r "1"}
+
+library("XLConnect")
+wb <- loadWorkbook ("//cdc.gov/private/M109/bvy8/Nepal_refugees/Nepal_refugees_cleaned_01022013.xlsx")
+
+db <- readWorksheet(wb, sheet="data", startRow=1, startCol=1, header=TRUE)
+str(db)
+```
+
+* start with age analysis
+* look at proportions by age group
+
+```{r "2"}
+agetable <- xtabs (count ~ AgeGp + Year, db)
+addmargins(agetable)
+
+# proportions by year
+ageprop <- prop.table(agetable, 2)
+ageprop
+```
+
+* structure table in longitudinal format for ggplot2, convert to a data frame, and change column names
+
+```{r "3"}
+library("reshape2")
+agepropdf <- data.frame(melt(ageprop))
+agepropdf
+
+#change column names for graphing
+colnames(agepropdf) <- c("Age_Group", "Year", "Proportion")
+str(agepropdf)
+```
+
+* make plot
+
+```{r "4"}
+library("ggplot2")
+library(RColorBrewer)
+
+ggplot(data=agepropdf, aes(x=Year, y=Proportion, fill=Age_Group)) + geom_bar(stat="identity", position="fill", width=.5) + scale_x_continuous(breaks=as.numeric(agepropdf$Year, agepropdf$Percent)) + scale_fill_manual(values=rev(brewer.pal(6,"Greens"))) +  ggtitle("Proportion of refugees from Nepal resettling in the U.S. \nby year and age group, N=65,183")
+
+```
+
+* Interpretation:  visually, the porportion of patients in each age group does not appear to have changed significantly from 2008 to 2012.  In 2008, 3.9% of the patients were in the 65+ year age group category while in 2012, the proportion increased slightly to 4.8%.
+
+
+* TB class analysis
+
+```{r "5"}
+Classtable <- xtabs(count ~ TBclass + Year, db)
+Classtablemar <- addmargins(Classtable)
+Classtablemar
+
+# calculate proportions by year
+Classprop <- prop.table(Classtable, 2)
+Classprop
+
+# make this a rate per 1,000
+Classrate <- Classprop*1000
+Classrate
+str(Classrate)
+
+# reshape to longitudinal format for ggplot and make a data frame
+Classratedf <- data.frame(Classrate)
+Classratedf
+
+# change column names
+colnames(Classratedf) <- c("TB_Class", "Year", "Rate_per_1000")
+str(Classratedf)
+
+#don't need to plot "other" so eliminate it
+Classratedf2 <- subset(Classratedf, TB_Class=="B1_pulm" )
+Classratedf2
+
++ geom_point(size=4)
+                     
+ggplot(data=Classratedf2, aes(x=Year, y=Rate_per_1000, group=1))  + geom_point(size=4)+ geom_line(size=1.5) + ggtitle("B1 Pulmonary Rate per 1,000 refugees from Nepal resettling in the U.S. \nby year, N=65,183") + geom_text(aes("2011", 90  , mapping=NULL, label="p for trend <0.001"), size=5, hjust=0, vjust=0)
+```
+
+* Interpretation:  there appears to be a steady increase in the rate of patients with B1 pulmonary classification from 2008 (7.8 per 1,000 arrivals) to 2012 (129.6 per 1,000 arrivals).  During that same period, there was a decline in the rate of patients with other B class conditions (B2, B3, and B1 unknown type: 102.2 per 1,000 in 2008, 29.9 per 1,000 in 2012).
+
+* Using the Chi-square test for trend, we will determine whether these changes were statistically significant
+
+```{r "6"}
+# look at trend for B1 pulmonary and B other
+# make a data frame
+Classtablemardf <- data.frame(Classtablemar)
+Classtablemardf
+
+#make vectors
+
+# select B1 pulmonary counts from table
+B1num <- Classtablemardf[c(2, 6, 10, 14, 18), 3]
+B1num
+# select other B class conditions from table
+Bother <- Classtablemardf[c(1, 5, 9, 13, 17), 3]
+Bother
+# select denominator counts
+denom <- Classtablemardf[c(4, 8, 12, 16, 20), 3]
+denom
+
+prop.test(B1num, denom)  #calculate proportion for B1 pulmonary
+prop.trend.test(B1num, denom)
+
+prop.test(Bother, denom) #calculate proportion for other B class conditions
+prop.trend.test(Bother, denom)
+
+# let's see if other B class conditions are still significant after removing 2008
+Bother2 <- Classtablemardf[c(5, 9, 13, 17), 3]
+Bother2
+denom2 <- Classtablemardf[c(8, 12, 16, 20), 3]
+denom2
+prop.test(Bother2, denom2) 
+prop.trend.test(Bother2, denom2)  # it is still significant
+```
+
+* Interpretation:  B1 pulmonary (increasing) and other B class conditions (decreasing) have significant trends (p<0.001)
+
+* Due to the significantly increasing trend in Class B1 pulmonary, we'll examine the age distribution by year, explore nationality/language, and B1 pulmonary type (treated/ not treated)
+
+
+
+
+
+
+
+
+
+
+
+look at B1 pulmonary by age group
+
+```{r "6b"}
+Classtableage <- xtabs(count ~ AgeGp + TBclass + Year, db)
+Classtableagemar <- addmargins(Classtableage) # add summary column
+Classtableagemar
+dfclassage <- data.frame(Classtableagemar)  # make data frame
+dfclassage
+
+dfclassage2 <- subset(dfclassage, (TBclass=="B1_pulm" | TBclass=="Sum") & (AgeGp != "Unk" & Year != "Sum"))
+dfclassage2
+str(dfclassage2)
+
+one <- subset(dfclassage2, (TBclass=="B1_pulm"))
+one
+two <- subset(dfclassage2, (TBclass=="Sum"))
+two
+colnames(two) <- c("AgeGp", "TBclass2", "Year", "count")
+
+
+both <- merge(one, two, all=TRUE)
+both
+
+both$Rate_per_1000 <- (both$Freq / both$count)*1000
+both
+colnames(both) <- c("Age_Group", "Year", "TBclass", "Freq", "TBclass2", "count", "Rate_per_1000")
+str(both)
+
+library("car")
+both$Age_Group <- recode(both$Age_Group, "'Sum' = 'All_ages'")
+
+both$Age_Group
+              
+both
+                     
+ggplot(data=both, aes(x=Year, y=Rate_per_1000, colour=Age_Group)) + geom_point(size=4) +  geom_line(size=1.5, aes(group=Age_Group)) + scale_color_manual(values=c("blue", "orange",  "red", "#009E73", "black")) + ggtitle("Rate of B1 pulmonary status per 1,000 refugees from Nepal \nresettling in the U.S., by age group and year, N=65,183") + geom_text(aes("2011", 425  , mapping=NULL, label="p for trend <0.001"), size=4, hjust=0, vjust=0) +
+geom_text(aes("2011", 210  , mapping=NULL, label="p for trend <0.001"), size=4, hjust=0, vjust=0) +
+geom_text(aes("2010", 110  , mapping=NULL, label="p for trend <0.001"), size=4, hjust=0, vjust=0) +
+geom_text(aes("2011", 68  , mapping=NULL, label="p for trend <0.001"), size=4, hjust=0, vjust=0) +
+geom_text(aes("2011", 10  , mapping=NULL, label="p for trend = 0.25"), size=4, hjust=0, vjust=0)
+
+
+both0_14 <- both[1:5, ]
+both0_14
+prop.test(both0_14$Freq, both0_14$count) 
+prop.trend.test(both0_14$Freq, both0_14$count) 
+
+both15_44 <- both[6:10, ]
+both15_44
+prop.test(both15_44$Freq, both15_44$count) 
+prop.trend.test(both15_44$Freq, both15_44$count) 
+
+both45_64 <- both[11:15, ]
+both45_64
+prop.test(both45_64$Freq, both45_64$count) 
+prop.trend.test(both45_64$Freq, both45_64$count) 
+
+both65 <- both[16:20, ]
+both65
+prop.test(both65$Freq, both65$count) 
+prop.trend.test(both65$Freq, both65$count) 
+
+```
+
+
+
+
+```{r "7"}
+#make dataset with just B1 pulmonary
+
+b1pulmon <- subset(db, TBclass=="B1_pulm")
+str(b1pulmon)
+
+b1table <- xtabs (count ~ AgeGp + Year, b1pulmon)
+addmargins(b1table)
+
+#eliminate unknown agegroup since all zeros
+b1table2 <- b1table[-5, ]
+addmargins(b1table2)
+
+# proportions by year
+b1prop <- prop.table(b1table2, 2)
+b1perc <- b1prop*100  # convert to percentage
+b1perc
+```
+
+* structure tables in longitudinal format for ggplot2 and convert to a data frame
+
+```{r "8"}
+library("reshape2")
+b1percdf <- data.frame(melt(b1perc))
+b1percdf
+
+#change column names for graphing
+colnames(b1percdf) <- c("Age_Group", "Year", "Percent")
+str(b1percdf)
+
+# make faceted plot by age group 
+ggplot(data=b1percdf, aes(x=Year, y=Percent, fill=Age_Group)) + geom_bar(stat="identity") + facet_grid(Age_Group ~ .) + ggtitle("Proportion of refugees from Nepal with \nClass B1 pulmonary status resettling in the U.S. \nby year and age group, N=5,495")
+```
+
+* Interpretation:  visually, there does not appear to be large differences in age group proportions from 2008 to 2012
+
+* The chi-square test, however, was significant
+
+```{r "9"}
+chisq.test(b1table2)  #this is significant  p=0.02944
+```
+
+* Since there were few observations in the 0-14 year age group, we will combine this with the 15-44 year group and re-run the  Chi-square test
+
+```{r "10"}
+b1table2
+cat0_14 <- b1table2[1, ]  #makes vector for 0-14 yrs
+cat0_14
+cat15_44 <- b1table2[2, ] #makes vector for 15-44 yrs
+cat15_44
+cat0_44 <- c(cat0_14+cat15_44) #combines vectors, 0-44 yrs
+cat0_44
+cat45_64 <- b1table2[3,] #makes vector for 45-64 yrs
+cat45_64
+cat65 <- b1table2[4, ] #makes vector for 65+ yrs
+cat65
+
+B1new <- matrix(c(cat0_44, cat45_64, cat65), ncol=5, byrow=TRUE) #makes a matrix
+B1new
+rownames(B1new)<- c("00_44", "45_46", "65+") #labels matrix
+colnames(B1new)<- c(2008, 2009, 2010, 2011, 2012)
+B1new <- as.table(B1new)
+
+chisq.test(B1new) #not significant anymore p=0.2388
+
+# make a new plot
+
+B1newprop <- prop.table(B1new, 2)
+B1newperc <- B1newprop*100
+
+B1newpercdf <- data.frame(B1newperc)
+B1newpercdf
+colnames(B1newpercdf) <- c("Age_Group", "Year", "Percent")
+
+ggplot(data=B1newpercdf, aes(x=Year, y=Percent, fill=Age_Group)) + geom_bar(stat="identity") + facet_grid(Age_Group ~ .) + ggtitle("Proportion of refugees from Nepal with \nClass B1 pulmonary status resettling in the U.S. \nby year and age group, N=5,495")
+```
+
+* Interpretation:  the age distribution of Class B1 pulmonary patients has not changed much from 2008 to 2012.  There has been a slight decrease in the 65+ agegroup (27% in 2008 to 21% in 2012).
+
+* Explore nationality/language data
+
+```{r "11"}
+# Class B1 patients
+b1nat <- xtabs(b1pulmon$count ~ b1pulmon$Nation)
+b1nat
+b1natprop <- prop.table(b1nat)
+b1natprop
+
+# all refugees
+natall <- xtabs(db$count ~ db$Nation)
+natall
+natallprop <- prop.table(natall)
+natallprop
+
+```
+
+* Interpretation:  Of the Class B1 pulmonary refugees, 4,966 (90.4%) of 5,495 were Nepali-speaking and from Bhutan, 511 (9.3%) were unknown.  For all 65,183 refugees, 61,618 (94.5%) were Nepali-speaking and from Bhutan, 3,148 (4.8%) were unknown.  Since most of the data fell into these two categories, it is hard to make use of these variables.  Ethnicity data may help better define the Nepali-speaking refugees from Bhutan to determine if there is a particular group at risk.
+
+* Finally, we'll examine type of Class B1 pulmonary by year (treated for TB or not treated)
+
+```{r "12"}
+# read in new dataset with additional data
+wb2 <- loadWorkbook ("//cdc.gov/private/M109/bvy8/Nepal_refugees/Nepal_refugees_cleaned_01042013_b1type.xlsx")
+
+db2 <- readWorksheet(wb2, sheet="data", startRow=1, startCol=1, header=TRUE)
+str(db2)
+
+# select only B1 pulmonary
+b1 <- subset(db2, Tbclass == "B1_pulm")
+
+# overall number of B1 types
+typeallb1 <- xtabs (count ~ type, b1)
+typeallb1
+
+# overall proportions
+typeallprop <- prop.table(typeallb1)
+typeallprop
+
+# B1 types by year
+typetab <- xtabs (count ~ type + Year, b1)
+typetab2 <- addmargins(typetab)
+typetab2
+
+typetaba <- xtabs (count ~ type + AgeGp, b1)
+typetaba2 <- addmargins(typetaba)
+typetaba2
+typepropa <- prop.table(typetaba, 2)
+typepropa
+
+# proportions by year
+typeprop <- prop.table(typetab, 2)
+perc <- typeprop*100
+
+# look at the treated group by year
+tx <- typetab2[2, 1:5]
+tx
+tot <- typetab2[4, 1:5]
+tot
+
+prop.trend.test(tx, tot) # not significant trend
+
+# make perc a dataframe to graph
+percdf <- data.frame(perc)
+percdf
+str(percdf)
+
+colnames(percdf) <- c("Type", "Year", "Percent")
+
+percdf2 <- percdf[c(2, 5, 8, 11, 14), ]
+percdf2
+
+ggplot(data=percdf2, aes(x=Year, y=Percent)) + geom_bar(stat="identity") + ggtitle("Percent of refugees by year from Nepal with Class B1 pulmonary status \nwho were treated for TB prior to resettling in the U.S., N=5,495")
+```
+
+* Interpretation:  from 2008 to 2010, there was an increase in the percentage of B1 pulmonary patients (0% to 10%) who were treated for TB prior to resettlement.  This suggests that there was an enhanced detection of TB overseas (or higher incidence of disease).  However, in 2011 and 2012, the percentage of B1 pulmonary status patients who were treated was lower.  Over the entire period, 93% were not treated (abnormal chest xray but smear/culture negative) and 7% were treated (had active TB) and were treated prior to resettlement.
+
+SUMMARY
+
+* The age distribution of refugees resettling to the U.S. from Nepal has not changed from 2008 to 2012
+
+* Refugees with Class B1 pulmonary status have increased signifantly from 2008 (1%) to 2012 (13%) but their age distribution has remained roughly the same
+
+* Refugees with other B class conditions have decreased significantly from 2008 (10%) to 2012 (3%) 
+
+* From 2008 to 2010, the percentage of refugees with B1 pulmonary status who were treated for TB increased from 0% to 10%.  That trend, however, did not hold for 2011 and 2012.
+
+RECOMMENDATION
+
+Abnormal chest xrays appear to be more prevalent among remaining refugees in Nepal.  Whether this is due to changes in screening protocols or a difference in the refugee population is unknown.  Regardless, medical staff screening these patients as well as agencies receiving these patients in the U.S. should be aware of the potential increased risk for TB. 
+
+
+
+
+
