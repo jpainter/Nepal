@@ -1,0 +1,958 @@
+\documentclass{article}
+
+\usepackage[margin=.5in]{geometry}
+\usepackage[section]{placeins}  %% keeps output from floating into adjoining sections
+\usepackage{setspace} %for Hmisc::describe
+\usepackage{relsize}  %for Hmisc::describe
+\usepackage{fixltx2e}
+\usepackage{booktabs} % for table formatting
+\usepackage{longtable}
+\usepackage{url}
+\usepackage{graphics}
+\usepackage{rotating}
+
+\begin{document}
+<<setup, echo=FALSE, message=FALSE, warning=FALSE >>=
+library(XLConnect)
+library(xtable)
+library(plyr)
+library(reshape2)
+library(ggplot2)
+library(RColorBrewer)
+library(car)
+@
+
+\title{\bf Nepal Refugee Analysis 2008 - 2012 }
+\date{}
+\maketitle
+
+\section{BACKGROUND}
+
+In Nepal, when resettlement started in 2008 there were 110,000 refugees.  Nearly 5 years later, about half the population has been resettled.  As the population shrinks, the IOM medical staff has the impression that the remaining population will become more medically challenging.  If so, this would have implications for the effort needed to medically clear the remaining refugees, and would impact the agencies in the U.S. that need to find appropriate placement and care for the newly arrived.  
+
+\section{OBJECTIVE:}
+
+to determine if the resettlement population has changed from 2008 to 2012 by age and TB  and Class B status.  
+
+\section{METHODS}  
+
+Medical overseas examination data are reported to the Electronic Disease Notification (EDN) system after arrival of the refugee.  These data are aggregated and made available for analysis in the Disease Notification Analysis (DNA) system in SQL Server Business Intelligence Development Studio.  An Excel spreadsheet, linked to DNA, was created for analysis.
+\\*
+\\*Variables included:  
+    \begin{itemize} 
+    \item Agegroup - agegroup3
+    \item Arrivaldate - calendar year
+    \item TBClass
+    \item Filters
+        \begin{itemize}
+          \item Present Country - Present country name: Nepal
+          \item Parent visa type - Refugee
+        \end{itemize}
+      \end{itemize}
+\\*
+\\*   
+\\* The variable TBClass includes Classes A, B1, B2, and B3.  For this anlysis, we focused on refugees with B1 Pulmonary classification.  The variable "B1\_Pulmonary" was created and was labeled 1 for those assigned a class of B1 Pulmonary or B1 Pulmonary + Extrapulmonary.  Otherwise B1\_Pulmonary was set to 0.
+\\*
+\\*
+Three categories were created for refugees classified as B1 Pulmonary:
+\begin {itemize}
+\item treated for TB
+\item not treated
+\item unknown
+\end {itemize}
+\\*
+\\*The R code below imports, cleans, and aggregates the data.
+
+<<"import-data", warning=FALSE>>=
+# read in data
+wb <- loadWorkbook ("//cdc.gov/private/M109/bvy8/Nepal_refugees/Nepal_refugees_DNA_01142013.xlsx")
+
+db <- readWorksheet(wb, sheet="data", startRow=5, startCol=1, header=TRUE)
+str(db)
+@
+
+<<"clean_data", warning=FALSE, results=hide>>=
+
+# recode NA to a character value so it is not ignored
+db$Level06[is.na(db$Level06)] <- "U"
+db$Level06
+
+# create a new variable called B1pulm
+# 1 if it B1 pulm, 0 otherwise
+db$B1pulm <- ifelse (db$Level06=="B1 TB pulmonary"| db$Level06 == "B1 TB pulmonary and extrapulmonary", 1, 0)
+
+table(db$B1pulm)
+
+# recode variable for B1 pulmonary type 
+#   and AgeGroup3
+db$Level07[db$Level07=="B1 pulm completed tx"] <- "treated"
+db$Level07[db$Level07=="B1 pulm no tx"] <- "not treated"
+db$Level07[is.na(db$Level07) & db$B1pulm==1] <- "unknown"
+
+db$AgeGroup3[db$AgeGroup3=="45+"] <- "45-64"
+
+# drop some variables
+
+db2 <- db[ ,c(1, 2, 8, 9, 10)]
+str(db2)
+
+# rename columns (variables)
+colnames(db2) <- c("Age_Group", "Year", "B1_Pulmonary_type", "Count", "B1_Pulmonary")
+str(db2)
+@
+
+
+<<"aggregate", warning=FALSE, results=hide>>=
+
+# Aggregate (Age, Year, B1 Pulmonary) on "Count"  
+# Will leave out b1 pulmnoary type variable for now  
+# .drop=FALSE fills in missing elements of the table
+
+Agg <- ddply(db2, .(Age_Group, Year, B1_Pulmonary), numcolwise(sum), .drop=FALSE) 
+Agg
+@
+
+\section{Nepal Refugees by Age and Year}
+
+Table 1 and Figure 1 below show the number and proportion of refugees from Nepal by age group and year.   
+  
+<<"age", warning=FALSE, results=hide>>=
+agetable <- xtabs (Count ~ Age_Group + Year, Agg)
+agetable2 <- addmargins(agetable)
+# remove sum column
+agetable3 <- agetable2[ , -6] 
+agetable3
+
+# proportions by year
+ageprop <- prop.table(agetable, 2)
+ageprop
+
+# eliminate unknowns for graphing so make up
+# only a fraction of the proportion
+ageprop2 <- ageprop[-5, ]
+ageprop2
+
+# structure table in longitudinal format 
+# for ggplot2, convert to a data frame
+agepropdf <- data.frame(melt(ageprop2))
+agepropdf
+
+# change column names for graphing
+colnames(agepropdf) <- c("Age_Group", "Year", "Proportion")
+str(agepropdf)
+@
+
+<<"ageplots", results=tex, warning=FALSE>>=
+Tage <- xtable(agetable3, caption="Number of Nepal refugees at arrival by age group and year, EDN 2008-2012", digits=0)
+print(Tage, caption.placement="top", include.rownames=TRUE)
+
+# make plot
+ggplot(data=agepropdf, aes(x=Year, y=Proportion, fill=Age_Group)) + geom_bar(stat="identity", position="fill", width=.5) + scale_x_continuous(breaks=as.numeric(agepropdf$Year, agepropdf$Percent)) + scale_fill_manual(values=rev(brewer.pal(6,"Greens"))) +  ggtitle("Figure 1. Age proportion by year of refugees from Nepal \nresettling in the U.S., EDN 2008-2012")
+@
+\\*
+\\*
+\\*Interpretation:  visually, the age porportion of refugees does not appear to have changed significantly from 2008 to 2012.  In 2008, 4.0\% of the patients were in the 65+ year age group category while in 2012, the proportion increased slightly to 4.8\%.
+
+\section{Class B1 Pulmonary}
+\begin{enumerate}
+\item Rate of Class B1 Pulmonary by year
+\\*
+\\*Table 2 shows the number of refugees from Nepal by year with Class B1 Pulmonary status.  A value of "1" are the refugees with Class B1 Pulmonary status.  Figue 2 displays the rate by year, per 1,000 refugees.
+
+<<"B1_pulmonary", warning=FALSE, results=hide>>=
+Classtable <- xtabs(Count ~ B1_Pulmonary + Year, Agg)
+
+Classtable2 <- addmargins(Classtable)
+# remove sum column
+Classtable3 <- Classtable2[ , -6]
+Classtable3
+
+# calculate proportions by year
+Classprop <- prop.table(Classtable, 2)
+Classprop
+
+# make this a rate per 1,000
+Classrate <- Classprop*1000
+Classrate
+str(Classrate)
+
+# reshape to longitudinal format for ggplot and make a data frame
+Classratedf <- data.frame(Classrate)
+Classratedf
+str(Classratedf)
+
+#don't need to plot non-B1pulmonary so eliminate it
+Classratedf2 <- subset(Classratedf, B1_Pulmonary==1)
+Classratedf2
+
+# change column names
+colnames(Classratedf2) <- c("B1_Pulmonary", "Year", "Rate_per_1000")
+str(Classratedf2)
+@
+
+<<"statsig", warning=FALSE, results=hide>>=
+# check for statistical significance
+
+Classtablemar <- addmargins(Classtable)
+Classtablemardf <- data.frame(Classtablemar)
+
+#make vectors
+
+# select B1 pulmonary counts from table
+B1num <- Classtablemardf[c(2, 5, 8, 11, 14), 3]
+B1num
+
+# select denominator counts
+denom <- Classtablemardf[c(3, 6, 9, 12, 15), 3]
+denom
+
+# calculate proportion + chi sq test for trend
+prop.test(B1num, denom)   
+prop.trend.test(B1num, denom) 
+@
+
+<<"B1_pulmonary_graphs", results=tex, warning=FALSE>>=
+TB1 <- xtable(Classtable3, caption="Number of Nepal refugees at arrival with Class B1 Pulmonary status by year, EDN 2008-2012", digits=0)
+print(TB1, caption.placement="top", include.rownames=TRUE)
+
+ggplot(data=Classratedf2, aes(x=Year, y=Rate_per_1000, group=1))  + geom_point(size=4)+ geom_line(size=1.5) + ggtitle("Figure 2. B1 Pulmonary Rate per 1,000 refugees from Nepal resettling \nin the U.S. by year, N=63,663") + geom_text(aes("2011", 90  , mapping=NULL, label="p for trend <0.001"), size=5, hjust=0, vjust=0)
+@
+\\*
+\\*
+\\*Interpretation:  there was a steady increase in the rate of refugees from Nepal with B1 Pulmonary classification from 2008 (7.9 per 1,000 arrivals) to 2012 (122.0 per 1,000 arrivals).  The Chi-square test for trend was significant at a p value of \textless0.001.
+
+\item Age-specific Rates of Class B1 Pulmonary by year
+\\*
+\\*Table 3 shows the number of refugees from Nepal with Class B1 Pulmonary status by age group and year.  A value of "1" are the refugees with Class B1 Pulmonary status.  Figure 3 displays age-specific rates by year for each age group, per 1,000 refugees.
+
+<<"B1pulmage", warning=FALSE, results=hide>>=
+
+Classtableage <- xtabs(Count ~ Age_Group + B1_Pulmonary + Year, Agg)
+# add summary column
+Classtableagemar <- addmargins(Classtableage) 
+Classtableagemar
+dfclassage <- data.frame(Classtableagemar)  
+dfclassage
+str(dfclassage)
+
+dfclassage2 <- subset(dfclassage, (B1_Pulmonary=="1" | B1_Pulmonary=="Sum") & (Age_Group != "Unknown" & Year != "Sum"))
+dfclassage2
+str(dfclassage2)
+
+dfclassage2b <- subset(dfclassage, B1_Pulmonary=="1" & Age_Group != "Sum")
+
+
+dfclassage2tab <-xtabs(Freq ~ Age_Group + Year, dfclassage2b)
+# remove unknown and sum rows
+dfclassage2tab <- dfclassage2tab[-c(5,6), ]
+dfclassage2tab
+str(dfclassage2tab)
+
+# add percent column
+b1age <- cbind(dfclassage2tab, round(dfclassage2tab[ ,6] / sum(dfclassage2tab[ ,6])*100, digits=1) )
+# add column name
+colnames(b1age)[7]<- "Percent"
+b1age                         
+
+# first, keep only B1 data
+B1 <- subset(dfclassage2, (B1_Pulmonary==1))
+B1
+str(B1) # determine # of obs
+
+# separately, keep only sum totals by age
+Tot <- subset(dfclassage2, (B1_Pulmonary=="Sum"))
+Tot
+str(Tot) # check # obs
+
+#rename Tot so can merge on Age_Group and Yr
+colnames(Tot) <- c("Age_Group", "B1_2", "Year", "count")
+
+both <- merge(B1, Tot, all=TRUE)
+both
+str(both) # 25 obs so merged correctly
+
+# make rate variable
+both$Rate_per_1000 <- (both$Freq / both$count)*1000
+both
+colnames(both) <- c("Age_Group", "Year", "TBclass", "Freq", "TBclass2", "count", "Rate_per_1000")
+str(both)
+
+both$Age_Group <- recode(both$Age_Group, "'Sum' = 'All_ages'")
+
+both$Age_Group        
+both
+@
+
+
+<<"B1_pulm_age_plots", results=tex, warning=FALSE>>=
+
+Tageb1 <- xtable(b1age, caption="Number of Nepal refugees at arrival with Class B1 Pulmonary Status by year and age group, EDN 2008-2012", digits=0)
+print(Tageb1, caption.placement="top", include.rownames=TRUE)
+
+ggplot(data=both, aes(x=Year, y=Rate_per_1000, colour=Age_Group)) + geom_point(size=4) +  geom_line(size=1.5, aes(group=Age_Group)) + scale_color_manual(values=c("blue", "orange",  "red", "#009E73", "black")) + ggtitle("Figure 3. Age-specific Rates of B1 pulmonary status per 1,000 refugees \nfrom Nepal resettling in the U.S. by year, N=63,663") 
+@
+
+Interpretation:  with the exception of the 0 to 14 year age group, there is a steady increase in the rate of B1 Pulmonary classification from 2008 to 2012. Rates are higher for older age groups. Of all the B1 Pulmonary status refugees druing the five year period, only 1\% were \textless15 years old.
+\*
+\item Comparison of Class B1 Pulmonary rates in Nepal to Thailand and Kenya
+\begin{itemize}
+\item Thailand
+\\*
+\\*Table 4 shows the number of refugees from Thailand with Class B1 Pulmonary status, by age group and year.  Figure 4 displays age-specific rates by year, per 1,000 refugees.
+
+<<"import-data_thai", warning=FALSE, results=hide>>=
+
+library("XLConnect")
+wbt <- loadWorkbook ("//cdc.gov/private/M109/bvy8/Nepal_refugees/Thailand_refugees_DNA_01142013.xlsx")
+
+dbt <- readWorksheet(wbt, sheet="data", startRow=5, startCol=1, header=TRUE)
+str(dbt)
+@
+
+<<"cleanthai", warning=FALSE, results=hide>>=
+
+# recode NA to a character value so it is not ignored
+dbt$Level06[is.na(dbt$Level06)] <- "U"
+dbt$Level06
+
+# create a new variable called B1pulm
+# 1 if it B1 pulm, 0 otherwise
+dbt$B1pulm <- ifelse (dbt$Level06=="B1 TB pulmonary"| dbt$Level06 == "B1 TB pulmonary and extrapulmonary", 1, 0)
+
+table(dbt$B1pulm)
+
+# recode variable for B1 pulmonary type 
+#   and AgeGroup3
+dbt$Level07[dbt$Level07=="B1 pulm completed tx"] <- "treated"
+dbt$Level07[dbt$Level07=="B1 pulm no tx"] <- "not treated"
+dbt$Level07[is.na(dbt$Level07) & dbt$B1pulm==1] <- "unknown"
+
+dbt$AgeGroup3[dbt$AgeGroup3=="45+"] <- "45-64"
+
+# drop some variables
+str(dbt)
+dbt2 <- dbt[ ,c(1, 2, 8, 9, 10)]
+str(db2)
+
+# rename columns (variables)
+colnames(dbt2) <- c("Age_Group", "Year", "B1_Pulmonary_type", "Count", "B1_Pulmonary")
+str(dbt2)
+@
+
+<<"aggregate_thai", warning=FALSE, results=hide>>=
+library("plyr")
+Aggt <- ddply(dbt2, .(Age_Group, Year, B1_Pulmonary), numcolwise(sum), .drop=FALSE) 
+Aggt
+sum(Aggt$Count)
+@
+
+<<"B1pulmthai_table", warning=FALSE, results=hide>>=
+Classtablet <- xtabs(Count ~ Age_Group + B1_Pulmonary + Year, Aggt)
+# add summary column
+Classtabletmar <- addmargins(Classtablet) 
+Classtabletmar
+dfclasst <- data.frame(Classtabletmar)  
+dfclasst
+str(dfclasst)
+
+dfclasst2 <- subset(dfclasst, B1_Pulmonary=="1")
+
+dfclasst2tab <-xtabs(Freq ~ Age_Group + Year, dfclasst2)
+dfclasst2tab
+
+# remove Sum row so can do %
+Sum <- dfclasst2tab[6, ]
+dfclasst3 <- dfclasst2tab[-6, ]
+
+# add percent column
+b1aget <- cbind(dfclasst3, round(dfclasst3[ ,6] / sum(dfclasst3[ ,6])*100, digits=1) )
+
+# add column name
+colnames(b1aget)[7]<- "Percent"
+
+# add back in sum row
+b1aget2<-rbind(b1aget, Sum)
+b1aget2
+# eliminate % from Sum row
+b1aget2[6,7] <- NA
+b1aget2
+@
+
+<<"B1pulmthai_graph", warning=FALSE, results=hide>>=
+
+dfclassaget2 <- subset(dfclasst, (B1_Pulmonary=="1" | B1_Pulmonary=="Sum") & (Age_Group != "Unknown" & Year != "Sum"))
+dfclassaget2
+str(dfclassaget2)
+
+# first, keep only B1 data
+B1t <- subset(dfclassaget2, (B1_Pulmonary==1))
+B1t
+str(B1t) # determine # of obs
+
+# separately, keep only sum totals by age
+Tott <- subset(dfclassaget2, (B1_Pulmonary=="Sum"))
+Tott
+str(Tott) # check # obs
+
+#rename Tot so can merge on Age_Group and Yr
+colnames(Tott) <- c("Age_Group", "B1_2", "Year", "count")
+
+botht <- merge(B1t, Tott, all=TRUE)
+botht
+str(botht) # 25 obs so merged correctly
+
+# make rate variable
+botht$Rate_per_1000 <- (botht$Freq / botht$count)*1000
+botht
+colnames(botht) <- c("Age_Group", "Year", "TBclass", "Freq", "TBclass2", "count", "Rate_per_1000")
+str(botht)
+
+library("car")
+botht$Age_Group <- recode(botht$Age_Group, "'Sum' = 'All_ages'")
+
+botht$Age_Group        
+botht
+@
+
+<<"B1_pulm_significance_thai", warning=FALSE, results=hide>>=
+# statistical sig of overall line
+# look at trend for B1 pulmonary 
+# make a data frame
+Ct <- xtabs(Count ~ B1_Pulmonary + Year, Aggt)
+# add summary column
+Ctmar <- addmargins(Ct) 
+Ctmar
+dfct <- data.frame(Ctmar)  
+dfct
+
+#make vectors
+
+# select B1 pulmonary counts from table
+B1numt <- dfct[c(2, 5, 8, 11, 14), 3]
+B1numt
+
+# also do trend for 2010-2012
+B1numt_short <- dfct[c(8, 11, 14), 3]
+
+# select denominator counts
+denomt <- dfct[c(3, 6, 9, 12, 15), 3]
+denomt
+
+denomt_short <- dfct[c(9, 12, 15), 3]
+
+# calculate proportion + chi sq test for trend
+prop.test(B1numt, denomt)   
+prop.trend.test(B1numt, denomt) 
+prop.trend.test(B1numt_short, denomt_short) 
+@
+
+<<"B1_thaiplots", warning=FALSE, results=tex>>=
+
+Tageb1t <- xtable(b1aget2, caption="Number of Thai refugees at arrival with Class B1 Pulmonary status by year and age group, EDN 2008-2012", digits=0)
+print(Tageb1t, caption.placement="top", include.rownames=TRUE)
+
+ggplot(data=botht, aes(x=Year, y=Rate_per_1000, colour=Age_Group)) + geom_point(size=4) +  geom_line(size=1.5, aes(group=Age_Group)) + scale_color_manual(values=c("blue", "orange",  "red", "#009E73", "black")) + ggtitle("Figure 4. Age-specific Rates of B1 pulmonary status per 1,000 refugees \nfrom Thailand resettling in the U.S. by year, N=46,534") 
+@
+
+\*Interpretation:  Sparse data in 2008 make interpretation of the rate that year difficult.  With the exception of the 65+ year age group, rates remained relatively constant from 2010 (86.5 per 1,000 refugees) to 2012 (88.4 per 1,000 refugees) (p=0.86). It is unclear why there was a spike in the 65+ year age group in 2012.
+
+\item Kenya
+\\*
+\\*Table 5 shows the number of refugees from Kenya with Class B1 Pulmonary status, by age group and year.  Figure 5 displays the age-specific rates by year, per 1,000 refugees.
+
+<<"import-data_kenya", warning=FALSE, results=hide>>=
+library("XLConnect")
+wbk <- loadWorkbook ("//cdc.gov/private/M109/bvy8/Nepal_refugees/Kenya_refugees_DNA_01142013.xlsx")
+
+dbk <- readWorksheet(wbk, sheet="data", startRow=5, startCol=1, header=TRUE)
+str(dbk)
+@
+
+<<"cleankenya", warning=FALSE, results=hide>>=
+
+# recode NA to a character value so it is not ignored
+dbk$Level06[is.na(dbk$Level06)] <- "U"
+dbk$Level06
+
+# create a new variable called B1pulm
+# 1 if it B1 pulm, 0 otherwise
+dbk$B1pulm <- ifelse (dbk$Level06=="B1 TB pulmonary"| dbk$Level06 == "B1 TB pulmonary and extrapulmonary", 1, 0)
+
+table(dbk$B1pulm)
+
+# recode variable for B1 pulmonary type 
+#   and AgeGroup3
+dbk$Level07[dbk$Level07=="B1 pulm completed tx"] <- "treated"
+dbk$Level07[dbk$Level07=="B1 pulm no tx"] <- "not treated"
+dbk$Level07[(is.na(dbk$Level07) & dbk$B1pulm==1) | dbk$Level07=="B1 pulm tx unk"] <- "unknown"
+
+dbk$AgeGroup3[dbk$AgeGroup3=="45+"] <- "45-64"
+dbk$AgeGroup3
+
+# drop some variables
+str(dbk)
+dbk2 <- dbk[ ,c(1, 2, 8, 9, 10)]
+str(dbk2)
+
+# rename columns (variables)
+colnames(dbk2) <- c("Age_Group", "Year", "B1_Pulmonary_type", "Count", "B1_Pulmonary")
+str(dbk2)
+@
+
+<<"aggregate_kenya", warning=FALSE, results=hide>>=
+library("plyr")
+
+Aggk <- ddply(dbk2, .(Age_Group, Year, B1_Pulmonary), colwise(sum, .(Count)), .drop=FALSE) 
+Aggk
+@
+
+<<"B1pulmkenya_table", warning=FALSE, results=hide>>=
+Classtablek <- xtabs(Count ~ Age_Group + B1_Pulmonary + Year, Aggk)
+# add summary column
+Classtablekmar <- addmargins(Classtablek) 
+Classtablekmar
+dfclassk <- data.frame(Classtablekmar)  
+dfclassk
+str(dfclassk)
+
+dfclassk2 <- subset(dfclassk, B1_Pulmonary=="1")
+
+dfclassk2tab <-xtabs(Freq ~ Age_Group + Year, dfclassk2)
+dfclasst2tab
+
+# remove Sum row so can do %
+Sum <- dfclassk2tab[6, ]
+dfclassk3 <- dfclassk2tab[-6, ]
+
+# add percent column
+b1agek <- cbind(dfclassk3, round(dfclassk3[ ,6] / sum(dfclassk3[ ,6])*100, digits=1) )
+
+# add column name
+colnames(b1agek)[7]<- "Percent"
+
+# add back in sum row
+b1agek2<-rbind(b1agek, Sum)
+b1agek2
+# eliminate % from Sum row
+b1agek2[6,7] <- NA
+b1agek2
+@
+
+<<"B1pulmkenya_graph", warning=FALSE, results=hide>>=
+
+dfclassagek2 <- subset(dfclassk, (B1_Pulmonary=="1" | B1_Pulmonary=="Sum") & (Age_Group != "Unknown" & Year != "Sum"))
+dfclassagek2
+str(dfclassagek2)
+
+# first, keep only B1 data
+B1k <- subset(dfclassagek2, (B1_Pulmonary==1))
+B1k
+str(B1k) # determine # of obs
+
+# separately, keep only sum totals by age
+Totk <- subset(dfclassagek2, (B1_Pulmonary=="Sum"))
+Totk
+str(Totk) # check # obs
+
+#rename Tot so can merge on Age_Group and Yr
+colnames(Totk) <- c("Age_Group", "B1_2", "Year", "count")
+
+bothk <- merge(B1k, Totk, all=TRUE)
+bothk
+str(bothk) # 25 obs so merged correctly
+
+# make rate variable
+bothk$Rate_per_1000 <- (bothk$Freq / bothk$count)*1000
+bothk
+colnames(bothk) <- c("Age_Group", "Year", "TBclass", "Freq", "TBclass2", "count", "Rate_per_1000")
+str(bothk)
+
+library("car")
+bothk$Age_Group <- recode(bothk$Age_Group, "'Sum' = 'All_ages'")
+
+bothk$Age_Group        
+bothk
+@
+
+<<"B1_pulm_significance_kenya", warning=FALSE, results=hide>>=
+# statistical sig of overall line
+# look at trend for B1 pulmonary 
+# make a data frame
+Ck <- xtabs(Count ~ B1_Pulmonary + Year, Aggk)
+# add summary column
+Ckmar <- addmargins(Ck) 
+Ckmar
+dfck <- data.frame(Ckmar)  
+dfck
+
+#make vectors
+
+# select B1 pulmonary counts from table
+B1numk <- dfck[c(2, 5, 8, 11, 14), 3]
+B1numk
+
+# check trend from 2009-2012
+B1numkshort <- dfck[c(5, 8, 11, 14), 3]
+
+# select denominator counts
+denomk <- dfck[c(3, 6, 9, 12, 15), 3]
+denomk
+
+denomkshort <- dfck[c(6, 9, 12, 15), 3]
+
+# calculate proportion + chi sq test for trend
+prop.test(B1numk, denomk)   
+prop.trend.test(B1numk, denomk) 
+prop.trend.test(B1numkshort, denomkshort) 
+@
+
+<<"B1_kenyaplots", warning=FALSE, results=tex>>=
+
+Tageb1k <- xtable(b1agek2, caption="Number of Kenya refugees at arrival with Class B1 Pulmonary status by year and age group, EDN 2008-2012", digits=0)
+print(Tageb1k, caption.placement="top", include.rownames=TRUE)
+
+ggplot(data=bothk, aes(x=Year, y=Rate_per_1000, colour=Age_Group)) + geom_point(size=4) +  geom_line(size=1.5, aes(group=Age_Group)) + scale_color_manual(values=c("blue", "orange",  "red", "#009E73", "black")) + ggtitle("Figure 5. Age-specific Rates of B1 pulmonary status per 1,000 refugees \nfrom Kenya resettling in the U.S. by year, N=14,915") 
+@
+
+\*Interpretation:  Rates for the \textless15 and 65+ year age groups are unstable due to sparse data.  In 2012, there was an increase in the rates of B1 Pulmonary status refugees in the 15 to 44 and 45 to 64 year age groups.  In Thailand and Kenya, a smaller proportion of the B1 Pulmonary status refugees were 65+ years. 
+
+\end{itemize}
+
+\item Class B1 Pulmonary type by year
+\end{enumerate}
+\*
+\*
+\*Table 6 below displays the number and percentage by year of Nepal refugees with the three categories of B1 Pulmonary classification:  not treated (abnormal chest x-rays but negative sputum and culture results), treated (formerly Class A active TB), and unknown.
+
+<<"B1type", results=hide, warning=FALSE>>=
+
+# select only B1 pulmonary
+b1 <- subset(db2, B1_Pulmonary == 1)
+
+# overall number of B1 types
+typeallb1 <- xtabs (Count ~ B1_Pulmonary_type, b1)
+typeallb1
+
+# overall proportions
+typeallprop <- prop.table(typeallb1)
+typeallprop
+
+# B1 types by year
+typetab <- xtabs (Count ~ B1_Pulmonary_type + Year, b1)
+typetab2 <- addmargins(typetab)
+typetab2
+
+# proportions by year
+typeprop <- prop.table(typetab, 2)
+perc <- round(typeprop*100, digits=1)
+perc
+
+# combine freq and percent
+zz<- matrix(rbind(typetab, perc), 3)
+zz
+colnames(zz)<- c("2008", "%", "2009", "%", "2010", "%", "2011", "%", "2012", "%")
+rownames(zz)<- c("Not treated", "Treated", "unknown")
+@
+
+<<"type_plots", results=tex, warning=FALSE>>=
+
+Tzz <- xtable(zz, caption="Number and percentage of B1 Pulmonary classification types of Nepal refugees at arrival by year, EDN 2008-2012", digits=0)
+print(Tzz, caption.placement="top", include.rownames=TRUE)
+@
+
+Interpretation:  the percentage of refugees with B1 Pulmonary status who were treated for TB increased from  4\% in 2009 to 10\% in 2010 but then reversed direction.  It is possible that increased screening identified more active TB patients initially (who were then treated), which subsequently led to decreased transmission and incidence in the camps.  TB patients identified in 2008 would have been treated in 2009 which is why 2008 shows 0 treated (resettlement started in late 2007).
+
+\section{Other Class B conditions}
+\begin{enumerate}
+\item Rate of other Class B conditions by year
+\\*
+\\*Class B conditions are disorders found on medical exam or history that are considered significant health problems that must be reported to consular authorities.  Specific B conditions include inactive or non-infectious TB; treated syphilis; pregnancy; Hansen's disease, treated multibacillary or paucibacillary; and sustained full remission of substance abuse and/or physical or mental disorder without harmful behavior.  Other Class B conditions are medical conditions not listed under one of the specific B conditions.
+\\*
+\\*Department of State (DS) forms have changed over time.  The variable DSFormType indicates which DS form was utilized.  If DSFormType is "1" or "2" then DS 2053 was used and variable "OtherClassB" was used to identify other Class B conditions.  Otherwise if DSFormType was "3", then DS 2054 was used and the variable "ClassBother" was used for Class B conditions.
+\\*
+\\*Table 7 displays the number of Nepal refugees with other Class B conditions by year. A vlaue of "1" are the refugees with other Class B conditions. Figure 7 displays the rate by year, per 1,000 refugees.
+
+<<"importBOther", warning=FALSE>>=
+# read in data
+wbo <- loadWorkbook ("//cdc.gov/private/M109/bvy8/Nepal_refugees/Nepal_refugees_DNA_01142013_Bother2.xlsx")
+
+dbo <- readWorksheet(wbo, sheet="data", startRow=5, startCol=1, header=TRUE)
+str(dbo)
+@
+
+<<"clean_Bother", warning=FALSE, results=hide>>=
+
+#change to numerical vars
+dbo$Year <- as.numeric(dbo$Year)
+dbo$TBTI <- as.numeric(dbo$TBTI)
+dbo$DSFormType <- as.numeric(dbo$DSFormType)
+dbo$ClassBother <- as.numeric(dbo$ClassBother)
+dbo$OtherClassB <- as.numeric(dbo$OtherClassB)
+str(dbo)
+
+# create a new variable called Bother
+# use OtherClassB if DSFormType = 1 or 2 (old forms)
+# use ClassBother if DSFormType=3 (new)
+  
+dbo$Bother <- ifelse (dbo$DSFormType==1 | dbo$DSFormType==2, dbo$OtherClassB, dbo$ClassBother)
+
+# recode variable 
+dbo$AgeGroup3[dbo$AgeGroup3=="45+"] <- "45-64"
+
+str(dbo)
+# drop some variables
+
+dbo2 <- dbo[ ,c(1, 2, 7, 8)]
+str(dbo2)
+
+# rename columns (variables)
+colnames(dbo2) <- c("Age_Group", "Year", "Count", "Class_B_other")
+str(dbo2)
+@
+
+<<"aggregate_otherB", warning=FALSE, results=hide>>=
+
+# Aggregate (Age, Year, B1 Pulmonary) on "Count"  
+# .drop=FALSE fills in missing elements of the table
+
+library(plyr)
+AggB <- ddply(dbo2, .(Age_Group, Year, Class_B_other), numcolwise(sum), .drop=FALSE) 
+AggB
+@
+
+<<"Bother", warning=FALSE, results=hide>>=
+ClasstableB <- xtabs(Count ~ Class_B_other + Year, AggB)
+ClasstableB2 <- addmargins(ClasstableB)
+# remove sum column
+ClasstableB3 <- ClasstableB2[ , -6]
+
+# calculate proportions by year
+ClasspropB <- prop.table(ClasstableB, 2)
+ClasspropB
+
+# make this a rate per 1,000
+ClassrateB <- ClasspropB*1000
+ClassrateB
+str(ClassrateB)
+
+# reshape to longitudinal format for ggplot and make a data frame
+ClassratedfB <- data.frame(ClassrateB)
+ClassratedfB
+str(ClassratedfB)
+
+#don't need to plot non-Class B others so eliminate
+ClassratedfB2 <- subset(ClassratedfB, Class_B_other==1)
+ClassratedfB2
+
+# change column names
+colnames(ClassratedfB2) <- c("Class_B_other", "Year", "Rate_per_1000")
+str(ClassratedfB2)
+@
+
+<<"statsig_bother", warning=FALSE, results=hide>>=
+# check for statistical significance
+
+ClasstablemarB <- addmargins(ClasstableB)
+ClasstablemardfB <- data.frame(ClasstablemarB)
+
+#make vectors
+
+# select B counts from table
+Bnum <- ClasstablemardfB[c(2, 5, 8, 11, 14), 3]
+Bnum
+
+# select denominator counts
+denomB <- ClasstablemardfB[c(3, 6, 9, 12, 15), 3]
+denomB
+
+# calculate proportion + chi sq test for trend
+prop.test(Bnum, denomB)   
+prop.trend.test(Bnum, denomB) 
+@
+
+<<"Bother_graphs", results=tex, warning=FALSE>>=
+library(xtable)
+Bother <- xtable(ClasstableB3, caption="Number of Nepal refugees at arrival with other Class B conditions by year, EDN 2008-2012", digits=0)
+print(Bother, caption.placement="top", include.rownames=TRUE) 
+
+ggplot(data=ClassratedfB2, aes(x=Year, y=Rate_per_1000, group=1))  + geom_point(size=4)+ geom_line(size=1.5) + ggtitle("Figure 7. Other Class B conditions Rate per 1,000 refugees from Nepal \nresettling in the U.S. by year, N=63,663") +
+geom_text(aes("2010", 300  , mapping=NULL, label="p for trend <0.001"), size=5, hjust=0, vjust=0) +  scale_y_continuous(limits=c(0, 400))
+@
+
+\\*Interpretation:  the rate of other Class B conditions did increase slightly from 305 per 1,000 refugees in 2008 to 357 per 1,000 refugees in 2012 (p\textless0.0001).
+
+\item Age-specific Rates of other Class B conditions by year
+\\*
+\\*Table 8 shows the number of refugees from Nepal with other Class B conditions by age group and year.  Figure 8 displays the age-specific rates by year, per 1,000 refugees.
+
+<<"Botherage", warning=FALSE, results=hide>>=
+
+ClasstableageB <- xtabs(Count ~ Age_Group + Class_B_other + Year, AggB)
+# add summary column
+ClasstableagemarB <- addmargins(ClasstableageB) 
+ClasstableagemarB
+dfclassageB <- data.frame(ClasstableagemarB)  
+dfclassageB
+str(dfclassageB)
+
+dfclassageB2 <- subset(dfclassageB, (Class_B_other=="1" | Class_B_other=="Sum") & (Age_Group != "Unknown" & Year != "Sum"))
+dfclassageB2
+str(dfclassageB2)
+
+dfclassageB2b <- subset(dfclassageB, Class_B_other=="1" & Age_Group != "Sum")
+
+
+dfclassageB2tab <-xtabs(Freq ~ Age_Group + Year, dfclassageB2b)
+
+dfclassageB2tab
+# remove unknown and sum rows
+dfclassageB2tab <- dfclassageB2tab[-c(5,6), ]
+dfclassageB2tab
+str(dfclassageB2tab)
+
+# add percent column
+bage <- cbind(dfclassageB2tab, round(dfclassageB2tab[ ,6] / sum(dfclassageB2tab[ ,6])*100, digits=1) )
+# add column name
+colnames(bage)[7]<- "Percent"
+bage                         
+
+# first, keep only B1 data
+B <- subset(dfclassageB2, (Class_B_other==1))
+B
+str(B) # determine # of obs
+
+# separately, keep only sum totals by age
+TotB <- subset(dfclassageB2, (Class_B_other=="Sum"))
+TotB
+str(TotB) # check # obs
+
+#rename TotB so can merge on Age_Group and Yr
+colnames(TotB) <- c("Age_Group", "B_2", "Year", "count")
+
+bothB <- merge(B, TotB, all=TRUE)
+bothB
+str(bothB) # 25 obs so merged correctly
+
+# make rate variable
+bothB$Rate_per_1000 <- (bothB$Freq / bothB$count)*1000
+bothB
+colnames(bothB) <- c("Age_Group", "Year", "Bclass", "Freq", "Bclass2", "count", "Rate_per_1000")
+str(bothB)
+
+library(car)
+bothB$Age_Group <- recode(bothB$Age_Group, "'Sum' = 'All_ages'")
+
+bothB$Age_Group        
+bothB
+@
+
+<<"Bother_age_plots", results=tex, warning=FALSE>>=
+
+Tageb <- xtable(bage, caption="Number of Nepal refugees at arrival with other Class B conditions by year and age group, EDN 2008-2012", digits=0)
+print(Tageb, caption.placement="top", include.rownames=TRUE)
+
+ggplot(data=bothB, aes(x=Year, y=Rate_per_1000, colour=Age_Group)) + geom_point(size=4) +  geom_line(size=1.5, aes(group=Age_Group)) + scale_color_manual(values=c("blue", "orange",  "red", "#009E73", "black")) + ggtitle("Figure 8. Age-specific Rates of Other Class B conditions per 1,000 \nrefugees from Nepal resettling in the U.S. by year, N=63,663") 
+@
+\\*
+\\*Interpretation: of those with other class B conditions, 47\% were in the 15 to 44 year age group and 26\% in the 45 to 64 year group. In the 45 to 64 year age group, there was a steady increase in the rate of other Class B conditions from 551.2 per 1,000 refugees in 2008 to 710.2 per 1,000 refugees in 2012.
+
+\item Text Parsing of other Class B conditions
+\\*
+\\*The type of other Class B condition is described in a text field.  For purposes of data exploration, 11 syndromes were created by reading the text field and observing common conditions listed. The data field is not available in DNA so SAS was used to query EDN.  Within SAS, Pearl Regular Expressions were used to create the 11 syndromes. Capital and small were accounted for as well as word boundaries and spaces between words. Definitions for each syndrome include:
+\\*
+\\*diabetes = diabetes, DM
+\\*cardiac = hyperte, HTN, blood pressure, echocard, heart, cardiomeg, artheroscl, atheroscl, cardiac, chest pain, atrial fib
+\\*psychiatric = depress, mood, psych, schizo, anxiety, panic, alcohol
+\\*TB = PPD, TB, tst
+\\*ENT\_vision = hearing, vision, visual, ENT, eye, blind, ophthal, myopia, ear, otitis, cataract, strabismus, deaf, tonsil
+\\*pulmonary = COPD, obstructive pulmonary disease, asthma
+\\*dental = dental, caries, teeth, gingivitis
+\\*GI = gastritis, peptic, dyspepsia
+\\*neurologic = headache, migraine, epilepsy, seizure
+\\*dermatologic = derm, tinea, psoriasis, rash, eczema, lipoma
+\\*pain = back pain, arthritis, athritis, rheumatoid, sciatica, backache, back ache, osteoaerthritis
+\\*
+\\*Of 63,664 refugees from Nepal from 2008 to 2012, 22,127 (35\%) had an other Class B condition.  Of those, 22,073 (\textgreater99\%) had a specified condition in the text field and of those, 18,553 (84\%) had at least one of the 11 syndromes.
+\\*
+\\*Table 9 displays the number of Nepal refugees with other Class B conditions by syndrome and year.  Figures 9a and 9b display syndrome-specifc rates per 1,000 refugees by year.
+
+<<"Bother_textparse", results=hide, warning=FALSE>>=
+# make vectors
+Diabetes <- c(78, 110, 83, 113, 124)
+Cardiac <- c(435, 735, 709, 981, 1261)
+Psych <- c(115, 282, 322, 321, 520)
+Tuberculosis <- c(716, 1889, 1071, 1027, 377)
+ENT_Vision<-c(1028, 2387, 2155, 2832, 2770)
+Pulmonary <- c(77, 243, 227, 207, 200)
+Dental <- c(91, 119, 28, 55, 18)
+Gastrointestinal <- c(38, 82, 84, 144, 160)
+Neurologic <- c(104, 241, 219, 246, 221)
+Dermatologic <- c(103, 244, 124, 348, 435)
+Pain <- c(40, 145, 178, 270, 271)
+
+denom <- c(7509, 15114, 11758, 14761, 14522)
+
+# calculate rates for each vector
+DM <- Diabetes/denom * 1000
+cardiac <- Cardiac/denom * 1000
+psych <- Psych/denom * 1000
+TB <- Tuberculosis/denom * 1000
+ENT_vision <- ENT_Vision/denom * 1000
+pulmonary <- Pulmonary/denom * 1000
+dental <- Dental/denom * 1000
+GI <- Gastrointestinal/denom * 1000
+neuro <- Neurologic/denom * 1000
+derm <- Dermatologic/denom * 1000
+pain <- Pain/denom * 1000
+
+# create 2 smaller matrixes for graph and 1 for table
+M1 <- rbind(DM, cardiac, psych, TB, ENT_vision)
+M2 <- rbind(pulmonary, dental, GI, neuro, derm, pain)
+M <- rbind(Diabetes, Cardiac, Psych, Tuberculosis, ENT_Vision, Pulmonary, Dental, Gastrointestinal, Neurologic, Dermatologic, Pain)
+
+colnames(M1)<- c("2008", "2009", "2010", "2011", "2012")
+colnames(M2)<- c("2008", "2009", "2010", "2011", "2012")
+colnames(M)<- c("2008", "2009", "2010", "2011", "2012")
+
+Mdf1 <- data.frame(melt(M1))
+Mdf2 <- data.frame(melt(M2))
+
+colnames(Mdf1) <- c("Syndrome", "Year", "Rate_per_1000")
+colnames(Mdf2) <- c("Syndrome", "Year", "Rate_per_1000")
+
+str(Mdf1)
+str(Mdf2)
+@
+
+<<"Bother_textparse_plots", results=tex, warning=FALSE>>=
+Bsyndrome <- xtable(M, caption="Number of Nepal refugees at arrival with other Class B conditions by year and syndrome, EDN 2008-2012", digits=0)
+print(Bsyndrome, caption.placement="top", include.rownames=TRUE)
+
+ggplot(data=Mdf1, aes(x=Year, y=Rate_per_1000, colour=Syndrome)) + geom_point(size=4) +  geom_line(size=1.5, aes(group=Syndrome)) + scale_color_manual(values=c("blue", "orange",  "red", "#009E73", "black")) + ggtitle("Figure 9a. Syndrome-specific Rates of Other Class B conditions per \n1,000 refugees from Nepal resettling in the U.S. by year, N=63,664") 
+
+ggplot(data=Mdf2, aes(x=Year, y=Rate_per_1000, colour=Syndrome)) + geom_point(size=4) +  geom_line(size=1.5, aes(group=Syndrome)) + scale_color_manual(values=c("blue", "orange",  "red", "#009E73", "black", "gray")) + ggtitle("Figure 9b. Syndrome-specific Rates of Other Class B conditions per \n1,000 refugees from Nepal resettling in the U.S. by year, N=63,664") 
+@
+\\*
+\\*Interpretation:  of the 11 syndromes, ears/nose/throat/vision, TB, and cardiac conditions were listed most commonly.  TB conditions should not be listed under other Class B conditions since it is a disease of primary importance and has its own classification.  Cardiac conditions appeared to rise gradually from 57.9 per 1,000 refugees in 2008 to 86.8 per 1,000 in 2012 (66\% of those with cardiac conditions were 50+ years old).
+
+\end{enumerate}
+
+\section{SUMMARY}
+\begin{itemize}
+\item Age distribution of refugees resettling in U.S. from Nepal has not changed from 2008 to 2012
+\item Rate of B1 Pulmonary status in Nepal increased significantly from 7.9 per 1,000 refugees in 2008 to 122.0 per 1,000 refugees in 2012; older age groups had higher rates
+\item For all ages, the rate of B1 pulmonary status in Thailand rose from 21.3 per 1,000 refugees in 2008 to 86.5 per 1,000 refugees in 2010 but then remained constant. In Kenya, overall B1 Pulmonary rates remained relatively constant from 2009 (38.6 per 1,000 refugees) to 2012 (46.3 per 1,000 refugees) and at a lower magnitude than Nepal or Thailand.
+\item The percentage of B1 Pulmonary status refugees treated for TB (initially Class A) increased from 4\% in 2009 to 10\% in 2010 but then reversed direction.  Initial screening may have identified active TB patients and subsequently treating them led to decreased transmission and thus decreased disease incidence among the remaining camp population.
+\item Other Class B conditions are common and hetereogeneous and remained relatively stable overall from 2008 (304.8 per 1,000 refugees) to 2012 (356.8 per 1,000 refugees).  Among other Class B conditions, cardiac conditions increased gradually from 57.9 per 1,000 refugees in 2008 to 86.8 per 1,000 in 2012.
+\end{itemize}
+
+\section{LIMITATIONS}
+\begin{itemize}
+\item EDN does not have specific ethnicity data to identify specific populations at risk within the camps
+\item "Other Class B conditions" are specified in a free text field creating heterogeneous data that are complex to analyze
+\item Syndromes created for other Class B condition analysis are not comprehensive
+\end{itemize}
+
+\section{DISCUSSION}
+\\* Abnormal chest xrays appear to be more prevalent among remaining refugees in Nepal.  Whether the remaining refugee population is truly medically different or whether there has been a change in categorization of Class B conditions is difficult to determine using these data. In addition, ethnicity data was not available to attempt to identify high risk groups. Regardless, medical staff screening refugees as well as agencies receiving them in the U.S. should be aware of the potential increased risk for TB among remaining U.S.-bound refugees in Nepal.
+\end{document}
